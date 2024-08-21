@@ -1,45 +1,36 @@
 from flask import Flask, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.ext.automap import automap_base
+from pymongo import MongoClient
+import config
+from bson import ObjectId
 
-# Initialize Flask application
 app = Flask(__name__)
-app.config.from_object('config.Config')
 
-# Initialize SQLAlchemy
-db = SQLAlchemy(app)
+def serialize_doc(doc):
+    """Convert MongoDB ObjectId fields to string and prepare document for JSON serialization."""
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            if isinstance(value, ObjectId):
+                doc[key] = str(value)
+            elif isinstance(value, dict):
+                serialize_doc(value)
+            elif isinstance(value, list):
+                doc[key] = [serialize_doc(item) if isinstance(item, dict) else item for item in value]
+    return doc
 
-# Reflect Database into ORM classes
-Base = automap_base()
+# Initialize MongoDB client
+client = MongoClient(config.MONGO_URI)
+db = client.get_default_database()
+establishments = db.establishments
 
-with app.app_context():
-    # Prepare the Base with the engine
-    Base.prepare(autoload_with=db.engine)
-    # Access the table class within the context
-    tables = Base.classes.keys()
-    Age = Base.classes.age  
-
-for table in tables:
-    print(table)
-    
 @app.route('/')
-def homepage():
-
-    return ('Welcome to an API on bird banding data')
-
-@app.route('/data')
-def get_data():
+def index():
     try:
-        # Query the database using Flask-SQLAlchemy's session
-        results = db.session.query(Age).all() 
-        
-        # Convert the query results into a list of dictionaries
-        data = [{'code': item.age_code, 'description': item.age_description} for item in results]  
-        
-        # Return the data as JSON
-        return jsonify({'data': data})
+        establishment = establishments.find_one()
+    
+        return jsonify(serialize_doc(establishment))
     except Exception as e:
-        return jsonify({"error": str(e)})
+        app.logger.error(f"Error querying the database: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
     app.run()
